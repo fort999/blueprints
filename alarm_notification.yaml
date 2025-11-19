@@ -6,11 +6,13 @@ blueprint:
 input:
   telegram_chat_id:
     name: Telegram Chat ID
+    description: ID чата или имя пользователя в Telegram
     selector:
       text:
   
   entities_config:
     name: Entities Configuration
+    description: Список сущностей для мониторинга с их настройками
     selector:
       object:
 
