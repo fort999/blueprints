@@ -1,0 +1,119 @@
+blueprint:
+  name: Universal Critical Monitor
+  description: Универсальный мониторинг с поддержкой числовых и текстовых значений
+  domain: automation
+
+input:
+  telegram_chat_id:
+    name: Telegram Chat ID
+    selector:
+      text:
+  
+  entities_config:
+    name: Entities Configuration
+    selector:
+      object:
+
+variables:
+  telegram_chat_id: !input telegram_chat_id
+  entities_config: !input entities_config
+
+trigger:
+  - platform: state
+    entity_id: >
+      {% set entities = [] %}
+      {% for item in entities_config %}
+        {% set _ = entities.append(item.entity_id) %}
+      {% endfor %}
+      {{ entities }}
+
+action:
+  - variables:
+      entity_id: "{{ trigger.entity_id }}"
+      new_state: "{{ trigger.to_state.state }}"
+      old_state: "{{ trigger.from_state.state }}"
+      
+      config: >-
+        {% for item in entities_config %}
+          {% if item.entity_id == entity_id %}
+            {{ item }}
+          {% endif %}
+        {% endfor %}
+      
+      # Умная проверка значения
+      check_result: >-
+        {% set c = config %}
+        {% set value = new_state %}
+        {% set is_numeric = value is number or value | float != 0.0 or value == '0' %}
+        {% set num_value = value | float(default=0) %}
+        
+        {% set trigger_alert = false %}
+        {% set alert_reason = "" %}
+        
+        {% if is_numeric %}
+          # Числовые проверки
+          {% if c.check_above is defined and num_value > c.check_above %}
+            {% set trigger_alert = true %}
+            {% set alert_reason = "above" %}
+          {% elif c.check_below is defined and num_value < c.check_below %}
+            {% set trigger_alert = true %}
+            {% set alert_reason = "below" %}
+          {% endif %}
+        {% else %}
+          # Текстовые проверки
+          {% if c.check_state is defined and value == c.check_state %}
+            {% set trigger_alert = true %}
+            {% set alert_reason = "state_match" %}
+          {% elif c.check_states is defined and value in c.check_states %}
+            {% set trigger_alert = true %}
+            {% set alert_reason = "state_in_list" %}
+          {% endif %}
+        {% endif %}
+        
+        {{ {
+          "alert": trigger_alert,
+          "reason": alert_reason,
+          "is_numeric": is_numeric,
+          "numeric_value": num_value
+        } }
+
+  - if:
+      - condition: template
+        value_template: "{{ check_result.alert }}"
+    then:
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ check_result.reason == 'above' }}"
+            sequence:
+              - service: telegram_bot.send_message
+                data:
+                  target: "{{ telegram_chat_id }}"
+                  message: >-
+                    🚨 *ПРЕВЫШЕНИЕ - {{ config.name | default(entity_id) }}*
+                    
+                    📊 *Текущее значение:* {{ new_state }}{{ config.unit | default('') }}
+                    📈 *Превышен порог:* {{ config.check_above }}{{ config.unit | default('') }}
+                    ⚠️ *Статус:* Критический
+                    
+                    💡 *Действие:* {{ config.action | default('Требуется вмешательство') }}
+                  parse_mode: markdown
+          
+          - conditions:
+              - condition: template
+                value_template: "{{ check_result.reason == 'below' }}"
+            sequence:
+              - service: telegram_bot.send_message
+                data:
+                  target: "{{ telegram_chat_id }}"
+                  message: >-
+                    🚨 *НИЖЕ НОРМЫ - {{ config.name | default(entity_id) }}*
+                    
+                    📊 *Текущее значение:* {{ new_state }}{{ config.unit | default('') }}
+                    📉 *Ниже порога:* {{ config.check_below }}{{ config.unit | default('') }}
+                    ⚠️ *Статус:* Критический
+                    
+                    💡 *Действие:* {{ config.action | default('Требуется вмешательство') }}
+                  parse_mode: markdown
+
+mode: single
