@@ -1,7 +1,8 @@
 blueprint:
   name: Universal Critical Values Monitor (hold per entity)
   description: >
-    Универсальный мониторинг критических значений с удержанием для каждого сенсора
+    Мониторинг критических значений с удержанием для каждого сенсора. 
+    Уведомления приходят только если значение остаётся критическим hold_seconds.
   domain: automation
 
   input:
@@ -19,65 +20,88 @@ blueprint:
       selector:
         object:
 
+    delay_seconds:
+      name: Delay before initial check (sec)
+      description: Короткая пауза после триггера, чтобы отфильтровать быстрые колебания
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 60
+          unit_of_measurement: sec
+
 trigger:
   - platform: state
 
 variables:
   entities_config: !input entities_config
-  monitored_entities: >
-    {{ entities_config | map(attribute='entity_id') | list }}
+  delay_seconds: !input delay_seconds
 
 condition:
   - condition: template
-    value_template: "{{ trigger.entity_id in monitored_entities }}"
+    value_template: "{{ trigger.entity_id in (entities_config | map(attribute='entity_id') | list) }}"
 
 action:
 
+  # Задержка после триггера
+  - delay:
+      seconds: "{{ delay_seconds }}"
+
+  # Определяем конфиг для текущего entity
   - variables:
       entity_id: "{{ trigger.entity_id }}"
       state_now: "{{ states(entity_id) }}"
       entity_config: >
+        {% set cfg = None %}
         {% for item in entities_config %}
           {% if item.entity_id == entity_id %}
-            {{ item }}
+            {% set cfg = item %}
           {% endif %}
         {% endfor %}
+        {{ cfg }}
 
+      hold_seconds: "{{ entity_config.hold_seconds | default(30) }}"
+
+      # Первичная проверка критичности
       check_result: >
         {% set c = entity_config %}
-        {% set value = state_now %}
-        {% set num_value = value | float(default=none) %}
-        {% set is_numeric = num_value is not none %}
-        {% set alert = false %}
-        {% set reason = '' %}
-        {% set threshold = 0 %}
-        {% if is_numeric %}
-          {% if c.check_above is defined and num_value > c.check_above %}
-            {% set alert = true %}{% set reason = 'above' %}{% set threshold = c.check_above %}
-          {% elif c.check_below is defined and num_value < c.check_below %}
-            {% set alert = true %}{% set reason = 'below' %}{% set threshold = c.check_below %}
-          {% endif %}
+        {% if c is none %}
+          {{ {'alert': false} }}
         {% else %}
-          {% if c.check_state is defined and value == c.check_state %}
-            {% set alert = true %}{% set reason = 'state_match' %}
-          {% elif c.check_states is defined and value in c.check_states %}
-            {% set alert = true %}{% set reason = 'state_in_list' %}
-          {% endif %}
-        {% endif %}
-        {{ {'alert': alert, 'reason': reason, 'threshold': threshold} }}
+          {% set value = state_now %}
+          {% set num_value = value | float(default=none) %}
+          {% set is_numeric = num_value is not none %}
+          {% set alert = false %}
+          {% set reason = '' %}
+          {% set threshold = 0 %}
 
-  # Если значение критическое — ждём указанное для entity время
+          {% if is_numeric %}
+            {% if c.check_above is defined and num_value > c.check_above %}
+              {% set alert = true %}{% set reason = 'above' %}{% set threshold = c.check_above %}
+            {% elif c.check_below is defined and num_value < c.check_below %}
+              {% set alert = true %}{% set reason = 'below' %}{% set threshold = c.check_below %}
+            {% endif %}
+          {% else %}
+            {% if c.check_state is defined and value == c.check_state %}
+              {% set alert = true %}{% set reason = 'state_match' %}
+            {% elif c.check_states is defined and value in c.check_states %}
+              {% set alert = true %}{% set reason = 'state_in_list' %}
+            {% endif %}
+          {% endif %}
+          {{ {'alert': alert, 'reason': reason, 'threshold': threshold} }}
+        {% endif %}
+
+  # Если значение критическое, ждём hold_seconds и проверяем снова
   - choose:
       - conditions:
           - condition: template
             value_template: "{{ check_result.alert }}"
         sequence:
           - delay:
-              seconds: "{{ entity_config.hold_seconds | default(30) }}"
+              seconds: "{{ hold_seconds }}"
 
           - variables:
               state_now: "{{ states(entity_id) }}"
-              # повторная проверка после задержки
               check_result_after: >
                 {% set c = entity_config %}
                 {% set value = state_now %}
@@ -101,11 +125,10 @@ action:
                 {% endif %}
                 {{ {'alert': alert, 'reason': reason, 'threshold': threshold} }}
 
+          # Отправка уведомления, если после hold_seconds состояние всё ещё критическое
           - condition: template
             value_template: "{{ check_result_after.alert }}"
-
           - choose:
-
               - conditions:
                   - condition: template
                     value_template: "{{ check_result_after.reason == 'above' }}"
@@ -118,7 +141,7 @@ action:
                         🚨 *ПРЕВЫШЕНИЕ - {{ entity_config.name | default(entity_id) }}*
                         📊 {{ state_now }}{{ entity_config.unit | default('') }}
                         📈 Порог: {{ check_result_after.threshold }}{{ entity_config.unit | default('') }}
-                        ⚠️ Критический
+                        ⚠️ Статус: Критический
                         💡 {{ entity_config.action | default('Требуется вмешательство') }}
 
               - conditions:
@@ -133,7 +156,7 @@ action:
                         🚨 *НИЖЕ НОРМЫ - {{ entity_config.name | default(entity_id) }}*
                         📊 {{ state_now }}{{ entity_config.unit | default('') }}
                         📉 Порог: {{ check_result_after.threshold }}{{ entity_config.unit | default('') }}
-                        ⚠️ Критический
+                        ⚠️ Статус: Критический
                         💡 {{ entity_config.action | default('Требуется вмешательство') }}
 
               - conditions:
@@ -147,7 +170,7 @@ action:
                       message: >
                         🚨 *КРИТИЧЕСКОЕ СОСТОЯНИЕ - {{ entity_config.name | default(entity_id) }}*
                         📊 {{ state_now }}
-                        ⚠️ Требует внимания
+                        ⚠️ Статус: Требует внимания
                         💡 {{ entity_config.action | default('Требуется проверка') }}
 
 mode: single
