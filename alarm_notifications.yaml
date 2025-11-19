@@ -1,8 +1,8 @@
 blueprint:
   name: Universal Critical Values Monitor (hold per entity)
   description: >
-    Мониторинг критических значений с удержанием для каждого сенсора. 
-    Уведомления приходят только если значение остаётся критическим hold_seconds.
+    Мониторинг критических значений для разных сенсоров с удержанием (hold_seconds).
+    Уведомление приходит только если значение остаётся критическим указанное время.
   domain: automation
 
   input:
@@ -19,6 +19,61 @@ blueprint:
           action: Включить кондиционер
       selector:
         object:
+          multiple: true
+          properties:
+            entity_id:
+              name: Entity
+              description: Сущность для мониторинга
+              selector:
+                entity:
+            name:
+              name: Display Name
+              description: Имя для уведомлений
+              selector:
+                text:
+            unit:
+              name: Unit
+              description: Единица измерения
+              selector:
+                text:
+            check_above:
+              name: Check Above
+              description: Порог выше которого значение считается критическим
+              selector:
+                number:
+            check_below:
+              name: Check Below
+              description: Порог ниже которого значение считается критическим
+              selector:
+                number:
+            check_state:
+              name: Check State
+              description: Состояние, при котором считается критическим
+              selector:
+                text:
+            check_states:
+              name: Check States
+              description: Список состояний, которые считаются критическими
+              selector:
+                text:
+            hold_seconds:
+              name: Hold Seconds
+              description: Время удержания значения в критическом диапазоне
+              default: 30
+              selector:
+                number:
+            action:
+              name: Action
+              description: Действие для уведомления
+              selector:
+                text:
+
+    notify_target:
+      name: Notify Target
+      description: Уведомления будут отправлены на этот notify
+      selector:
+        entity:
+          domain: notify
 
     delay_seconds:
       name: Delay before initial check (sec)
@@ -30,31 +85,29 @@ blueprint:
           max: 60
           unit_of_measurement: sec
 
+# Триггер на все сущности из entities_config
 trigger:
   - platform: state
+    entity_id: !input entities_config
 
 variables:
   entities_config: !input entities_config
   delay_seconds: !input delay_seconds
-
-condition:
-  - condition: template
-    value_template: "{{ trigger.entity_id in (entities_config | map(attribute='entity_id') | list) }}"
+  notify_target: !input notify_target
 
 action:
-
-  # Задержка после триггера
+  # Короткая задержка после срабатывания триггера
   - delay:
       seconds: "{{ delay_seconds }}"
 
-  # Определяем конфиг для текущего entity
+  # Определяем конфиг текущей сущности
   - variables:
       entity_id: "{{ trigger.entity_id }}"
       state_now: "{{ states(entity_id) }}"
       entity_config: >
         {% set cfg = None %}
         {% for item in entities_config %}
-          {% if item.entity_id == entity_id %}
+          {% if item.entity_id == trigger.entity_id %}
             {% set cfg = item %}
           {% endif %}
         {% endfor %}
@@ -70,12 +123,10 @@ action:
         {% else %}
           {% set value = state_now %}
           {% set num_value = value | float(default=none) %}
-          {% set is_numeric = num_value is not none %}
           {% set alert = false %}
           {% set reason = '' %}
           {% set threshold = 0 %}
-
-          {% if is_numeric %}
+          {% if num_value is not none %}
             {% if c.check_above is defined and num_value > c.check_above %}
               {% set alert = true %}{% set reason = 'above' %}{% set threshold = c.check_above %}
             {% elif c.check_below is defined and num_value < c.check_below %}
@@ -91,7 +142,7 @@ action:
           {{ {'alert': alert, 'reason': reason, 'threshold': threshold} }}
         {% endif %}
 
-  # Если значение критическое, ждём hold_seconds и проверяем снова
+  # Если критично, ждём hold_seconds и проверяем снова
   - choose:
       - conditions:
           - condition: template
@@ -106,11 +157,10 @@ action:
                 {% set c = entity_config %}
                 {% set value = state_now %}
                 {% set num_value = value | float(default=none) %}
-                {% set is_numeric = num_value is not none %}
                 {% set alert = false %}
                 {% set reason = '' %}
                 {% set threshold = 0 %}
-                {% if is_numeric %}
+                {% if num_value is not none %}
                   {% if c.check_above is defined and num_value > c.check_above %}
                     {% set alert = true %}{% set reason = 'above' %}{% set threshold = c.check_above %}
                   {% elif c.check_below is defined and num_value < c.check_below %}
@@ -125,7 +175,6 @@ action:
                 {% endif %}
                 {{ {'alert': alert, 'reason': reason, 'threshold': threshold} }}
 
-          # Отправка уведомления, если после hold_seconds состояние всё ещё критическое
           - condition: template
             value_template: "{{ check_result_after.alert }}"
           - choose:
@@ -133,9 +182,8 @@ action:
                   - condition: template
                     value_template: "{{ check_result_after.reason == 'above' }}"
                 sequence:
-                  - action: notify.send_message
-                    target:
-                      entity_id: notify.alarm
+                  - service: notify.send_message
+                    target: "{{ notify_target.entity_id }}"
                     data:
                       message: >
                         🚨 *ПРЕВЫШЕНИЕ - {{ entity_config.name | default(entity_id) }}*
@@ -148,9 +196,8 @@ action:
                   - condition: template
                     value_template: "{{ check_result_after.reason == 'below' }}"
                 sequence:
-                  - action: notify.send_message
-                    target:
-                      entity_id: notify.alarm
+                  - service: notify.send_message
+                    target: "{{ notify_target.entity_id }}"
                     data:
                       message: >
                         🚨 *НИЖЕ НОРМЫ - {{ entity_config.name | default(entity_id) }}*
@@ -163,9 +210,8 @@ action:
                   - condition: template
                     value_template: "{{ check_result_after.reason in ['state_match','state_in_list'] }}"
                 sequence:
-                  - action: notify.send_message
-                    target:
-                      entity_id: notify.alarm
+                  - service: notify.send_message
+                    target: "{{ notify_target.entity_id }}"
                     data:
                       message: >
                         🚨 *КРИТИЧЕСКОЕ СОСТОЯНИЕ - {{ entity_config.name | default(entity_id) }}*
