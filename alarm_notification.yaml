@@ -3,17 +3,17 @@ blueprint:
   description: Универсальный мониторинг с поддержкой числовых и текстовых значений
   domain: automation
 
-input:
-  telegram_chat_id:
-    name: Telegram Chat ID
-    description: ID чата или имя пользователя в Telegram
-    selector:
-      text:
-  entities_config:
-    name: Entities Configuration
-    description: Список сущностей для мониторинга в формате YAML
-    selector:
-      object:
+  input:
+    telegram_chat_id:
+      name: Telegram Chat ID
+      description: ID чата или имя пользователя в Telegram
+      selector:
+        text:
+    entities_config:
+      name: Entities Configuration
+      description: Список сущностей для мониторинга в формате YAML
+      selector:
+        object:
 
 variables:
   telegram_chat_id: !input telegram_chat_id
