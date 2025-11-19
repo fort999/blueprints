@@ -9,10 +9,9 @@ input:
     description: ID чата или имя пользователя в Telegram
     selector:
       text:
-  
   entities_config:
     name: Entities Configuration
-    description: Список сущностей для мониторинга с их настройками
+    description: Список сущностей для мониторинга в формате YAML
     selector:
       object:
 
