@@ -9,62 +9,46 @@ blueprint:
     entities_config:
       name: Entities Configuration
       description: >
-        Пример:
-        - entity_id: sensor.temp
-          name: Температура
-          unit: °C
-          check_above: 28
-          check_below: 18
-          hold_seconds: 60
-          action: Включить кондиционер
+        Список сенсоров для мониторинга с порогами и действиями.
       selector:
         object:
           multiple: true
           properties:
             entity_id:
               name: Entity
-              description: Сущность для мониторинга
               selector:
                 entity:
             name:
               name: Display Name
-              description: Имя для уведомлений
               selector:
                 text:
             unit:
               name: Unit
-              description: Единица измерения
               selector:
                 text:
             check_above:
               name: Check Above
-              description: Порог выше которого значение считается критическим
               selector:
                 number:
             check_below:
               name: Check Below
-              description: Порог ниже которого значение считается критическим
               selector:
                 number:
             check_state:
               name: Check State
-              description: Состояние, при котором считается критическим
               selector:
                 text:
             check_states:
               name: Check States
-              description: Список состояний, которые считаются критическими
               selector:
                 text:
             hold_seconds:
               name: Hold Seconds
-              description: Время удержания значения в критическом диапазоне
               default: 30
               selector:
                 number:
             action:
               name: Action
-              description: Действие для уведомления
               selector:
                 text:
 
@@ -77,7 +61,7 @@ blueprint:
 
     delay_seconds:
       name: Delay before initial check (sec)
-      description: Короткая пауза после триггера, чтобы отфильтровать быстрые колебания
+      description: Короткая пауза после триггера
       default: 5
       selector:
         number:
@@ -85,7 +69,7 @@ blueprint:
           max: 60
           unit_of_measurement: sec
 
-# Триггер на все сущности из entities_config
+# ✅ Триггер на все entity из entities_config
 trigger:
   - platform: state
     entity_id: !input entities_config
@@ -96,7 +80,7 @@ variables:
   notify_target: !input notify_target
 
 action:
-  # Короткая задержка после срабатывания триггера
+  # Задержка после триггера
   - delay:
       seconds: "{{ delay_seconds }}"
 
@@ -112,10 +96,9 @@ action:
           {% endif %}
         {% endfor %}
         {{ cfg }}
-
       hold_seconds: "{{ entity_config.hold_seconds | default(30) }}"
 
-      # Первичная проверка критичности
+      # Первичная проверка
       check_result: >
         {% set c = entity_config %}
         {% if c is none %}
@@ -142,7 +125,7 @@ action:
           {{ {'alert': alert, 'reason': reason, 'threshold': threshold} }}
         {% endif %}
 
-  # Если критично, ждём hold_seconds и проверяем снова
+  # Если значение критическое, ждём hold_seconds
   - choose:
       - conditions:
           - condition: template
