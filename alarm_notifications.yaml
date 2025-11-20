@@ -1,5 +1,5 @@
 blueprint:
-  name: Critical Value Monitor (single entity)
+  name: Critical Value Monitor (single entity) with Recommendation
   description: >
     Мониторинг критических значений с удержанием для одной сущности. 
     Уведомления приходят только если значение остаётся критическим hold_seconds.
@@ -42,7 +42,7 @@ blueprint:
       default: ""
     check_states:
       name: Check States
-      description: Список допустимых критических значений (нечисловой сенсор)
+      description: Список критических значений для нечислового сенсора
       default: []
       selector:
         object:
@@ -65,17 +65,24 @@ blueprint:
           min: 0
           max: 60
           step: 1
+    action:
+      name: Recommendation / Action
+      description: Текстовое сообщение с рекомендацией, которое будет вставлено в уведомление
+      default: "Требуется проверка"
+      selector:
+        text: {}
 
 trigger:
   - platform: state
     entity_id: !input entity
 
 variables:
+  entity_name: "{{ name | default(states(trigger.entity_id).name) }}"
   state_now: "{{ states(trigger.entity_id) }}"
-  entity_name: "{{ input_name | default(states(trigger.entity_id).name) }}"
   unit: "{{ unit | default('') }}"
   hold_seconds: !input hold_seconds
   delay_seconds: !input delay_seconds
+  recommendation: !input action
 
 action:
   - delay:
@@ -117,64 +124,42 @@ action:
               state_after: "{{ states(trigger.entity_id) }}"
               num_after: "{{ state_after | float(default=None) }}"
               is_numeric_after: "{{ num_after is not none }}"
-              alert_after: false
-              reason_after: ""
-              threshold_after: 0
 
           - choose:
               - conditions:
                   - condition: template
-                    value_template: >
-                      {% if is_numeric_after %}
-                        {% if check_above is not none and num_after > check_above %}
-                          true
-                        {% elif check_below is not none and num_after < check_below %}
-                          true
-                        {% else %}
-                          false
-                        {% endif %}
-                      {% else %}
-                        {% if check_state != "" and state_after == check_state %}
-                          true
-                        {% elif check_states | length > 0 and state_after in check_states %}
-                          true
-                        {% else %}
-                          false
-                        {% endif %}
-                      {% endif %}
+                    value_template: "{{ is_numeric_after and check_above is not none and num_after > check_above }}"
                 sequence:
-                  - choose:
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ is_numeric_after and check_above is not none and num_after > check_above }}"
-                        sequence:
-                          - service: notify.send_message
-                            data:
-                              message: >
-                                🚡 *ПРЕВЫШЕНИЕ - {{ entity_name }}*
-                                📊 Текущее: {{ state_after }}{{ unit }}
-                                📈 Порог: {{ check_above }}{{ unit }}
-                                ⚠️ Статус: Критический
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ is_numeric_after and check_below is not none and num_after < check_below }}"
-                        sequence:
-                          - service: notify.send_message
-                            data:
-                              message: >
-                                🚡 *НИЖЕ НОРМЫ - {{ entity_name }}*
-                                📊 Текущее: {{ state_after }}{{ unit }}
-                                📉 Порог: {{ check_below }}{{ unit }}
-                                ⚠️ Статус: Критический
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ not is_numeric_after and (state_after == check_state or state_after in check_states) }}"
-                        sequence:
-                          - service: notify.send_message
-                            data:
-                              message: >
-                                🚡 *КРИТИЧЕСКОЕ СОСТОЯНИЕ - {{ entity_name }}*
-                                📊 Состояние: {{ state_after }}
-                                ⚠️ Статус: Требует внимания
+                  - service: notify.send_message
+                    data:
+                      message: >
+                        🚡 *ПРЕВЫШЕНИЕ - {{ entity_name }}*
+                        📊 Текущее: {{ state_after }}{{ unit }}
+                        📈 Порог: {{ check_above }}{{ unit }}
+                        ⚠️ Статус: Критический
+                        💡 {{ recommendation }}
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_numeric_after and check_below is not none and num_after < check_below }}"
+                sequence:
+                  - service: notify.send_message
+                    data:
+                      message: >
+                        🚡 *НИЖЕ НОРМЫ - {{ entity_name }}*
+                        📊 Текущее: {{ state_after }}{{ unit }}
+                        📉 Порог: {{ check_below }}{{ unit }}
+                        ⚠️ Статус: Критический
+                        💡 {{ recommendation }}
+              - conditions:
+                  - condition: template
+                    value_template: "{{ not is_numeric_after and (state_after == check_state or state_after in check_states) }}"
+                sequence:
+                  - service: notify.send_message
+                    data:
+                      message: >
+                        🚡 *КРИТИЧЕСКОЕ СОСТОЯНИЕ - {{ entity_name }}*
+                        📊 Состояние: {{ state_after }}
+                        ⚠️ Статус: Требует внимания
+                        💡 {{ recommendation }}
 
 mode: single
