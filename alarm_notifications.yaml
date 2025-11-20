@@ -1,181 +1,180 @@
 blueprint:
-  name: Universal Critical Values Monitor (hold per entity)
-  description: 'Мониторинг критических значений с удержанием для каждого сенсора. Уведомления приходят только если значение остаётся критическим hold_seconds.'
+  name: Critical Value Monitor (single entity)
+  description: >
+    Мониторинг критических значений с удержанием для одной сущности. 
+    Уведомления приходят только если значение остаётся критическим hold_seconds.
   domain: automation
   input:
-    entities_config:
-      name: Entities Configuration
-      description: |
-        Пример:
-        - entity_id: sensor.temp
-          name: Температура
-          unit: "°C"
-          check_above: 28
-          check_below: 18
-          hold_seconds: 60
-          action: Включить кондиционер
+    entity:
+      name: Entity to monitor
+      description: Сенсор или бинарный сенсор, который нужно мониторить
+      selector:
+        entity:
+    name:
+      name: Display Name
+      description: Человекочитаемое имя для уведомлений
+      default: ""
+    unit:
+      name: Unit
+      description: Единица измерения для сенсора
+      default: ""
+    check_above:
+      name: Check Above
+      description: Порог, при превышении которого срабатывает alert
+      default: null
+      selector:
+        number:
+          min: -1000
+          max: 1000
+          step: 0.1
+    check_below:
+      name: Check Below
+      description: Порог, при падении ниже которого срабатывает alert
+      default: null
+      selector:
+        number:
+          min: -1000
+          max: 1000
+          step: 0.1
+    check_state:
+      name: Check State
+      description: Если сенсор — нечисловой, сработает alert при совпадении
+      default: ""
+    check_states:
+      name: Check States
+      description: Список допустимых критических значений (нечисловой сенсор)
+      default: []
       selector:
         object:
           multiple: true
+    hold_seconds:
+      name: Hold Seconds
+      description: Время удержания состояния перед уведомлением
+      default: 60
+      selector:
+        number:
+          min: 0
+          max: 3600
+          step: 1
     delay_seconds:
-      name: Delay before initial check (sec)
-      description: Короткая пауза после триггера, чтобы отфильтровать быстрые колебания
+      name: Delay before initial check
+      description: Пауза после изменения состояния для фильтрации быстрых колебаний
       default: 5
       selector:
         number:
-          min: 0.0
-          max: 60.0
-          unit_of_measurement: sec
-          step: 1.0
-          mode: slider
+          min: 0
+          max: 60
+          step: 1
 
 trigger:
   - platform: state
-    entity_id: >
-      {% set entities = [] %}
-      {% for item in inputs.entities_config %}
-        {% set _ = entities.append(item.entity_id) %}
-      {% endfor %}
-      {{ entities }}
+    entity_id: !input entity
 
 variables:
-  entities_config: !input 'entities_config'
-  delay_seconds: !input 'delay_seconds'
-  entity_id: "{{ trigger.entity_id }}"
   state_now: "{{ states(trigger.entity_id) }}"
+  entity_name: "{{ input_name | default(states(trigger.entity_id).name) }}"
+  unit: "{{ unit | default('') }}"
+  hold_seconds: !input hold_seconds
+  delay_seconds: !input delay_seconds
 
 action:
   - delay:
       seconds: "{{ delay_seconds }}"
-  
+
   - variables:
-      entity_config: >
-        {% for item in entities_config %}
-          {% if item.entity_id == entity_id %}
-            {{ item }}
-          {% endif %}
-        {% endfor %}
-      hold_seconds: "{{ entity_config.hold_seconds | default(30) }}"
-      check_result: >
-        {% if entity_config is not defined or entity_config is none %}
-          {{ {'alert': false} }}
-        {% else %}
-          {% set value = state_now %}
-          {% set num_value = value | float(default=none) %}
-          {% set is_numeric = num_value is not none %}
-          
-          {% set alert = false %}
-          {% set reason = '' %}
-          {% set threshold = 0 %}
-          
-          {% if is_numeric %}
-            {% if entity_config.check_above is defined and num_value > entity_config.check_above %}
-              {% set alert = true %}
-              {% set reason = 'above' %}
-              {% set threshold = entity_config.check_above %}
-            {% elif entity_config.check_below is defined and num_value < entity_config.check_below %}
-              {% set alert = true %}
-              {% set reason = 'below' %}
-              {% set threshold = entity_config.check_below %}
-            {% endif %}
-          {% else %}
-            {% if entity_config.check_state is defined and value == entity_config.check_state %}
-              {% set alert = true %}
-              {% set reason = 'state_match' %}
-            {% elif entity_config.check_states is defined and value in entity_config.check_states %}
-              {% set alert = true %}
-              {% set reason = 'state_in_list' %}
-            {% endif %}
-          {% endif %}
-          
-          {{ {'alert': alert, 'reason': reason, 'threshold': threshold} }}
-        {% endif %}
+      num_value: "{{ state_now | float(default=None) }}"
+      is_numeric: "{{ num_value is not none }}"
+      alert: false
+      reason: ""
+      threshold: 0
 
   - choose:
       - conditions:
           - condition: template
-            value_template: "{{ check_result.alert }}"
+            value_template: >
+              {% if is_numeric %}
+                {% if check_above is not none and num_value > check_above %}
+                  true
+                {% elif check_below is not none and num_value < check_below %}
+                  true
+                {% else %}
+                  false
+                {% endif %}
+              {% else %}
+                {% if check_state != "" and state_now == check_state %}
+                  true
+                {% elif check_states | length > 0 and state_now in check_states %}
+                  true
+                {% else %}
+                  false
+                {% endif %}
+              {% endif %}
         sequence:
           - delay:
               seconds: "{{ hold_seconds }}"
           
           - variables:
-              state_now: "{{ states(entity_id) }}"
-              check_result_after: >
-                {% set value = state_now %}
-                {% set num_value = value | float(default=none) %}
-                {% set is_numeric = num_value is not none %}
-                
-                {% set alert = false %}
-                {% set reason = '' %}
-                {% set threshold = 0 %}
-                
-                {% if is_numeric %}
-                  {% if entity_config.check_above is defined and num_value > entity_config.check_above %}
-                    {% set alert = true %}
-                    {% set reason = 'above' %}
-                    {% set threshold = entity_config.check_above %}
-                  {% elif entity_config.check_below is defined and num_value < entity_config.check_below %}
-                    {% set alert = true %}
-                    {% set reason = 'below' %}
-                    {% set threshold = entity_config.check_below %}
-                  {% endif %}
-                {% else %}
-                  {% if entity_config.check_state is defined and value == entity_config.check_state %}
-                    {% set alert = true %}
-                    {% set reason = 'state_match' %}
-                  {% elif entity_config.check_states is defined and value in entity_config.check_states %}
-                    {% set alert = true %}
-                    {% set reason = 'state_in_list' %}
-                  {% endif %}
-                {% endif %}
-                
-                {{ {'alert': alert, 'reason': reason, 'threshold': threshold} }}
-          
-          - condition: template
-            value_template: "{{ check_result_after.alert }}"
-          
+              state_after: "{{ states(trigger.entity_id) }}"
+              num_after: "{{ state_after | float(default=None) }}"
+              is_numeric_after: "{{ num_after is not none }}"
+              alert_after: false
+              reason_after: ""
+              threshold_after: 0
+
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ check_result_after.reason == 'above' }}"
+                    value_template: >
+                      {% if is_numeric_after %}
+                        {% if check_above is not none and num_after > check_above %}
+                          true
+                        {% elif check_below is not none and num_after < check_below %}
+                          true
+                        {% else %}
+                          false
+                        {% endif %}
+                      {% else %}
+                        {% if check_state != "" and state_after == check_state %}
+                          true
+                        {% elif check_states | length > 0 and state_after in check_states %}
+                          true
+                        {% else %}
+                          false
+                        {% endif %}
+                      {% endif %}
                 sequence:
-                  - service: notify.send_message
-                    data:
-                      message: >
-                        🚡 *ПРЕВЫШЕНИЕ - {{ entity_config.name | default(entity_id) }}*
-                        
-                        📊 Текущее: {{ state_now }}{{ entity_config.unit | default('') }}
-                        📈 Порог: {{ check_result_after.threshold }}{{ entity_config.unit | default('') }}
-                        ⚠️ Статус: Критический
-                        
-                        💡 {{ entity_config.action | default('Требуется вмешательство') }}
-              - conditions:
-                  - condition: template
-                    value_template: "{{ check_result_after.reason == 'below' }}"
-                sequence:
-                  - service: notify.send_message
-                    data:
-                      message: >
-                        🚡 *НИЖЕ НОРМЫ - {{ entity_config.name | default(entity_id) }}*
-                        
-                        📊 Текущее: {{ state_now }}{{ entity_config.unit | default('') }}
-                        📉 Порог: {{ check_result_after.threshold }}{{ entity_config.unit | default('') }}
-                        ⚠️ Статус: Критический
-                        
-                        💡 {{ entity_config.action | default('Требуется вмешательство') }}
-              - conditions:
-                  - condition: template
-                    value_template: "{{ check_result_after.reason in ['state_match', 'state_in_list'] }}"
-                sequence:
-                  - service: notify.send_message
-                    data:
-                      message: >
-                        🚡 *КРИТИЧЕСКОЕ СОСТОЯНИЕ - {{ entity_config.name | default(entity_id) }}*
-                        
-                        📊 Состояние: {{ state_now }}
-                        ⚠️ Статус: Требует внимания
-                        
-                        💡 {{ entity_config.action | default('Требуется проверка') }}
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ is_numeric_after and check_above is not none and num_after > check_above }}"
+                        sequence:
+                          - service: notify.send_message
+                            data:
+                              message: >
+                                🚡 *ПРЕВЫШЕНИЕ - {{ entity_name }}*
+                                📊 Текущее: {{ state_after }}{{ unit }}
+                                📈 Порог: {{ check_above }}{{ unit }}
+                                ⚠️ Статус: Критический
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ is_numeric_after and check_below is not none and num_after < check_below }}"
+                        sequence:
+                          - service: notify.send_message
+                            data:
+                              message: >
+                                🚡 *НИЖЕ НОРМЫ - {{ entity_name }}*
+                                📊 Текущее: {{ state_after }}{{ unit }}
+                                📉 Порог: {{ check_below }}{{ unit }}
+                                ⚠️ Статус: Критический
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ not is_numeric_after and (state_after == check_state or state_after in check_states) }}"
+                        sequence:
+                          - service: notify.send_message
+                            data:
+                              message: >
+                                🚡 *КРИТИЧЕСКОЕ СОСТОЯНИЕ - {{ entity_name }}*
+                                📊 Состояние: {{ state_after }}
+                                ⚠️ Статус: Требует внимания
 
 mode: single
