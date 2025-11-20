@@ -56,15 +56,6 @@ blueprint:
           min: 0
           max: 3600
           step: 1
-    delay_seconds:
-      name: Delay before initial check
-      description: Пауза после изменения состояния для фильтрации быстрых колебаний
-      default: 5
-      selector:
-        number:
-          min: 0
-          max: 60
-          step: 1
     action:
       name: Recommendation / Action
       description: Текстовое сообщение с рекомендацией, которое будет вставлено в уведомление
@@ -81,85 +72,52 @@ variables:
   state_now: "{{ states(trigger.entity_id) }}"
   unit: "{{ unit | default('') }}"
   hold_seconds: !input hold_seconds
-  delay_seconds: !input delay_seconds
   recommendation: !input action
 
 action:
   - delay:
-      seconds: "{{ delay_seconds }}"
+      seconds: "{{ hold_seconds }}"
 
   - variables:
-      num_value: "{{ state_now | float(default=None) }}"
-      is_numeric: "{{ num_value is not none }}"
-      alert: false
-      reason: ""
-      threshold: 0
+      state_after: "{{ states(trigger.entity_id) }}"
+      num_after: "{{ state_after | float(default=None) }}"
+      is_numeric_after: "{{ num_after is not none }}"
 
   - choose:
       - conditions:
           - condition: template
-            value_template: >
-              {% if is_numeric %}
-                {% if check_above is not none and num_value > check_above %}
-                  true
-                {% elif check_below is not none and num_value < check_below %}
-                  true
-                {% else %}
-                  false
-                {% endif %}
-              {% else %}
-                {% if check_state != "" and state_now == check_state %}
-                  true
-                {% elif check_states | length > 0 and state_now in check_states %}
-                  true
-                {% else %}
-                  false
-                {% endif %}
-              {% endif %}
+            value_template: "{{ is_numeric_after and check_above is not none and num_after > check_above }}"
         sequence:
-          - delay:
-              seconds: "{{ hold_seconds }}"
-          
-          - variables:
-              state_after: "{{ states(trigger.entity_id) }}"
-              num_after: "{{ state_after | float(default=None) }}"
-              is_numeric_after: "{{ num_after is not none }}"
-
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ is_numeric_after and check_above is not none and num_after > check_above }}"
-                sequence:
-                  - service: notify.send_message
-                    data:
-                      message: >
-                        🚡 *ПРЕВЫШЕНИЕ - {{ entity_name }}*
-                        📊 Текущее: {{ state_after }}{{ unit }}
-                        📈 Порог: {{ check_above }}{{ unit }}
-                        ⚠️ Статус: Критический
-                        💡 {{ recommendation }}
-              - conditions:
-                  - condition: template
-                    value_template: "{{ is_numeric_after and check_below is not none and num_after < check_below }}"
-                sequence:
-                  - service: notify.send_message
-                    data:
-                      message: >
-                        🚡 *НИЖЕ НОРМЫ - {{ entity_name }}*
-                        📊 Текущее: {{ state_after }}{{ unit }}
-                        📉 Порог: {{ check_below }}{{ unit }}
-                        ⚠️ Статус: Критический
-                        💡 {{ recommendation }}
-              - conditions:
-                  - condition: template
-                    value_template: "{{ not is_numeric_after and (state_after == check_state or state_after in check_states) }}"
-                sequence:
-                  - service: notify.send_message
-                    data:
-                      message: >
-                        🚡 *КРИТИЧЕСКОЕ СОСТОЯНИЕ - {{ entity_name }}*
-                        📊 Состояние: {{ state_after }}
-                        ⚠️ Статус: Требует внимания
-                        💡 {{ recommendation }}
+          - service: notify.send_message
+            data:
+              message: >
+                🚡 *ПРЕВЫШЕНИЕ - {{ entity_name }}*
+                📊 Текущее: {{ state_after }}{{ unit }}
+                📈 Порог: {{ check_above }}{{ unit }}
+                ⚠️ Статус: Критический
+                💡 {{ recommendation }}
+      - conditions:
+          - condition: template
+            value_template: "{{ is_numeric_after and check_below is not none and num_after < check_below }}"
+        sequence:
+          - service: notify.send_message
+            data:
+              message: >
+                🚡 *НИЖЕ НОРМЫ - {{ entity_name }}*
+                📊 Текущее: {{ state_after }}{{ unit }}
+                📉 Порог: {{ check_below }}{{ unit }}
+                ⚠️ Статус: Критический
+                💡 {{ recommendation }}
+      - conditions:
+          - condition: template
+            value_template: "{{ not is_numeric_after and (state_after == check_state or state_after in check_states) }}"
+        sequence:
+          - service: notify.send_message
+            data:
+              message: >
+                🚡 *КРИТИЧЕСКОЕ СОСТОЯНИЕ - {{ entity_name }}*
+                📊 Состояние: {{ state_after }}
+                ⚠️ Статус: Требует внимания
+                💡 {{ recommendation }}
 
 mode: single
