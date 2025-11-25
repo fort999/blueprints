@@ -1,53 +1,50 @@
 blueprint:
   name: Critical Value Monitor (single entity, universal)
   description: >
-    Мониторинг критических значений для одной сущности.
-    Подходит для числовых и бинарных/строковых сенсоров.
-    Уведомления приходят только если состояние остаётся критическим hold_seconds.
+    Мониторинг критических значений для одной сущности. Подходит для числовых
+    и бинарных/строковых сенсоров. Уведомления приходят только если состояние остаётся
+    критическим hold_seconds.
   domain: automation
-
   input:
     entity:
       name: Entity to monitor
       description: Сенсор или бинарный сенсор для мониторинга
       selector:
         entity:
-
+          reorder: false
+          multiple: false
     name:
       name: Display Name
       description: Человекочитаемое имя для уведомлений
-      default: ""
-
+      default: ''
     unit:
       name: Unit
       description: Единица измерения (для числовых сенсоров)
-      default: ""
-
+      default: ''
     check_above:
       name: Check Above
       description: Порог, при превышении которого срабатывает alert
-      default: null
+      default:
       selector:
         number:
-          min: -1000
-          max: 1000
+          min: -1000.0
+          max: 1000.0
           step: 0.1
-
+          mode: slider
     check_below:
       name: Check Below
       description: Порог, при падении ниже которого срабатывает alert
-      default: null
+      default:
       selector:
         number:
-          min: -1000
-          max: 1000
+          min: -1000.0
+          max: 1000.0
           step: 0.1
-
+          mode: slider
     check_state:
       name: Check State
       description: Если сенсор не числовой, сработает alert при совпадении
-      default: ""
-
+      default: ''
     check_states:
       name: Check States
       description: Список критических значений для нечислового сенсора
@@ -55,75 +52,80 @@ blueprint:
       selector:
         object:
           multiple: true
-
     hold_seconds:
       name: Hold Seconds
       description: Время удержания состояния перед уведомлением
       default: 60
       selector:
         number:
-          min: 0
-          max: 3600
-          step: 1
-
+          min: 0.0
+          max: 3600.0
+          step: 1.0
+          mode: slider
     action:
       name: Recommendation / Action
       description: Текстовое сообщение с рекомендацией, вставляется в уведомление
-      default: "Требуется проверка"
+      default: Требуется проверка
       selector:
-        text: {}
-
+        text:
+          multiple: false
+          multiline: false
     notify_target:
       name: Notification Target
       description: Выберите, куда отправлять уведомления
       selector:
         entity:
-          domain: notify
+          domain:
+          - notify
+          reorder: false
+          multiple: false
+  source_url: https://github.com/fort999/blueprints/blob/main/alarm_notifications.yaml
 
 trigger:
   - platform: state
     entity_id: !input entity
 
 variables:
-  entity_name: "{{ name | default(states(trigger.entity_id).name) }}"
+  entity_name: '{{ name | default(states(trigger.entity_id).name) }}'
   hold_seconds: !input hold_seconds
   recommendation: !input action
-  unit: "{{ unit | default('') }}"
+  unit: '{{ unit | default('''') }}'
+  check_above_val: !input check_above
+  check_below_val: !input check_below
+  check_state_val: !input check_state
+  check_states_val: !input check_states
 
 action:
   - delay:
-      seconds: "{{ hold_seconds }}"
-
+      seconds: '{{ hold_seconds }}'
   - variables:
-      state_after: "{{ states(trigger.entity_id) }}"
-      num_after: "{{ state_after | float(default=None) }}"
-      is_numeric: "{{ num_after is not none }}"
-
+      state_after: '{{ states(trigger.entity_id) }}'
+      num_after: '{{ state_after | float(default=None) }}'
+      is_numeric: '{{ num_after is not none }}'
   - choose:
       - conditions:
           - condition: template
-            value_template: >
+            value_template: >-
               {% if is_numeric %}
-                {{ (check_above is not none and num_after > check_above) or
-                   (check_below is not none and num_after < check_below) }}
+                {{ (check_above_val is not none and num_after > check_above_val) or
+                   (check_below_val is not none and num_after < check_below_val) }}
               {% else %}
-                {{ (check_state != "" and state_after == check_state) or
-                   (check_states | length > 0 and state_after in check_states) }}
+                {{ (check_state_val != "" and state_after == check_state_val) or
+                   (check_states_val | length > 0 and state_after in check_states_val) }}
               {% endif %}
         sequence:
           - service: notify.send_message
             target:
               entity_id: !input notify_target
             data:
-              message: >
+              message: >-
                 🚡 *КРИТИЧЕСКОЕ СОСТОЯНИЕ - {{ entity_name }}*
                 📊 Текущее: {{ state_after }}{{ unit }}
-                {% if is_numeric and check_above is not none and num_after > check_above %}
-                📈 Порог: {{ check_above }}{{ unit }}
-                {% elif is_numeric and check_below is not none and num_after < check_below %}
-                📉 Порог: {{ check_below }}{{ unit }}
+                {% if is_numeric and check_above_val is not none and num_after > check_above_val %}
+                📈 Порог: {{ check_above_val }}{{ unit }}
+                {% elif is_numeric and check_below_val is not none and num_after < check_below_val %}
+                📉 Порог: {{ check_below_val }}{{ unit }}
                 {% endif %}
                 ⚠️ Статус: Критический
                 💡 {{ recommendation }}
-
 mode: single
